@@ -1,9 +1,4 @@
 const { Client } = require("pg");
-
-const axios = require("axios");
-const cheerio = require("cheerio");
-const { contents } = require("cheerio/lib/api/traversing");
-
 require("dotenv").config();
 
 const USER_NAME = process.env.USER_NAME;
@@ -11,23 +6,30 @@ const PASSWORD = process.env.PASSWORD;
 const HOST = process.env.HOST;
 const DATABASE_NAME = process.env.DATABASE_NAME;
 
-const connectionString = `postgres://${USER_NAME}:${PASSWORD}@${HOST}:5432/${DATABASE_NAME}`;
+const postgresConnectionString = `postgres://${USER_NAME}:${PASSWORD}@${HOST}:5432/${DATABASE_NAME}`;
 
 const client = new Client({
-  connectionString: connectionString,
+  connectionString: postgresConnectionString,
 });
 
-const getDataFromDb = async () => {
+const getPathFromDb = async () => {
   try {
     await client.connect();
 
-    const query = `SELECT telegraph_path
-    FROM bot_clients
-    WHERE telegraph_path IS NOT NULL;`;
+    const query = `SELECT telegraph_path, id, login
+      FROM bot_clients
+      WHERE telegraph_path IS NOT NULL;`;
 
     const res = await client.query(query);
 
-    return res.rows;
+    const resultArray = res.rows.map((row) => {
+      return {
+        telegraph_path: row.telegraph_path,
+        id: row.id,
+        login: row.login,
+      };
+    });
+    return resultArray;
   } catch (error) {
     console.error(error);
   } finally {
@@ -36,28 +38,57 @@ const getDataFromDb = async () => {
 };
 
 const getGradeFromTelegraph = async () => {
-  const dataFromDb = await getDataFromDb();
-  dataFromDb.forEach(async (row) => {
+  const dataFromDb = await getPathFromDb();
+  const uploadData = [];
+  for (const row of dataFromDb) {
     try {
-      const response = await axios.get(
-        `https://telegra.ph/${row.telegraph_path}`
-      );
+      const grade = await fetchGrade(row.telegraph_path);
 
-      const $ = cheerio.load(response.data);
+      if (grade.includes("⭐️⭐️⭐️⭐️")) {
+        const authorStruct = {
+          id: row.id,
+          login: row.login,
+          path: `https://telegra.ph/${row.telegraph_path}`,
+          grade: grade.includes("⭐️⭐️⭐️⭐️⭐️") ? 5 : 4,
+        };
 
-      const tagSelector = 'h4:contains("Оцінка: ")';
-
-      const parentElement = $(tagSelector).parent();
-
-      const content = parentElement.text().trim();
-
-      console.log(content);
+        uploadData.push(authorStruct);
+      }
     } catch (error) {
       console.error(error);
     }
-  });
+  }
+  return uploadData;
 };
 
-const uploadDataToSheet = async () => {};
+const fetchGrade = async (link) => {
+  try {
+    const response = await fetch(
+      `https://api.telegra.ph/getPage/${link}?return_content=true`
+    );
 
-getGradeFromTelegraph();
+    const data = await response.json();
+    if (data.ok) {
+      return data.result.content[3] || "";
+    } else {
+      throw new Error(data.error || "Unknown error");
+    }
+  } catch (error) {
+    throw new Error("Error fetching data: " + error.message);
+  }
+};
+
+const uploadDataToSheet = async () => {
+  try {
+    const sheetData = await getGradeFromTelegraph();
+    const jsonSheetData = JSON.stringify(sheetData);
+    
+    //TODO: send sheetData to GoogleSheets
+
+    console.log(sheetData);
+  } catch (error) {
+    console.error(error);
+  }
+};
+
+uploadDataToSheet();
