@@ -1,4 +1,5 @@
 const { google } = require("googleapis");
+const { tasks } = require("googleapis/build/src/apis/tasks");
 const { Client } = require("pg");
 require("dotenv").config();
 
@@ -25,11 +26,12 @@ const getPathFromDb = async () => {
 
     const resultArray = res.rows.map((row) => {
       return {
-        telegraph_path: row.telegraph_path,
         id: row.id,
+        telegraph_path: row.telegraph_path,
         login: row.login,
       };
     });
+    // console.log(resultArray);
     return resultArray;
   } catch (error) {
     console.error(error.message);
@@ -43,7 +45,29 @@ const getGradeFromTelegraph = async () => {
   const uploadData = [];
   for (const row of dataFromDb) {
     try {
-      const grade = await fetchGrade(row.telegraph_path);
+      const telegraphData = await fetchTelegraphData(row.telegraph_path);
+
+      const content = telegraphData.result.content;
+      const contentText = content
+        .map((item) => (typeof item === "string" ? item : ""))
+        .join(" ");
+
+      const tasksRegex = /Виконано робіт: (\d+)|Выполнено работ: (\d+)/;
+      const intimePercentageRegex = /Термін здачі: (\d+)%|Срок сдачи: (\d+)%/;
+      const positiveFeedbackRegex =
+        /Відгук: 👍 (\d+)%|Отзывы: 👍 (\d+)%|Відкликання: 👍 (\d+)/;
+      const negativeFeedbackRegex =
+        /Відгук: 👎 (\d+)%|Отзывы: 👎 (\d+)%|Відкликання: 👎 (\d+)/;
+
+      const tasksCompleted = tasksRegex.exec(contentText);
+      const positivePercentage = positiveFeedbackRegex.exec(contentText);
+      const negativePercentage = negativeFeedbackRegex.exec(contentText);
+      const intimePercentage = intimePercentageRegex.exec(contentText);
+
+      const gradeMatch = content.find(
+        (item) => typeof item === "string" && item.includes("⭐️")
+      );
+      const grade = gradeMatch ? gradeMatch.trim() : "";
 
       if (grade.includes("⭐️⭐️⭐️⭐️")) {
         const authorStruct = [
@@ -51,6 +75,10 @@ const getGradeFromTelegraph = async () => {
           `https://t.me/${row.login}`,
           `https://telegra.ph/${row.telegraph_path}`,
           grade.includes("⭐️⭐️⭐️⭐️⭐️") ? 5 : 4,
+          tasksCompleted ? tasksCompleted[1] : null,
+          positivePercentage ? positivePercentage[1] + "%" : null,
+          negativePercentage ? negativePercentage[1] + "%" : null,
+          intimePercentage ? intimePercentage[1] + "%" : null,
         ];
 
         uploadData.push(authorStruct);
@@ -62,7 +90,7 @@ const getGradeFromTelegraph = async () => {
   return uploadData;
 };
 
-const fetchGrade = async (link) => {
+const fetchTelegraphData = async (link) => {
   try {
     const response = await fetch(
       `https://api.telegra.ph/getPage/${link}?return_content=true`
@@ -70,7 +98,8 @@ const fetchGrade = async (link) => {
 
     const data = await response.json();
     if (data.ok) {
-      return data.result.content[3] || "";
+      // console.log(data.result.content);
+      return data || "";
     } else {
       throw new Error(data.error || "Unknown error");
     }
@@ -82,6 +111,8 @@ const fetchGrade = async (link) => {
 const uploadDataToSheet = async () => {
   try {
     const sheetData = await getGradeFromTelegraph();
+
+    // console.log(sheetData);
 
     const spreadsheetId = "1iJ2vyKh9TX8fU8ggdqJmQw9Mf2ESXk1uOzI0wUGP1JI";
     const auth = new google.auth.GoogleAuth({
@@ -95,7 +126,7 @@ const uploadDataToSheet = async () => {
       {
         auth,
         spreadsheetId,
-        range: "Помічники!A:B",
+        range: "Помічники!A:H",
         valueInputOption: "USER_ENTERED",
         insertDataOption: "INSERT_ROWS",
         resource: {
