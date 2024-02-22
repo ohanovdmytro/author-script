@@ -32,7 +32,7 @@ This Node.js app connects to a PostgreSQL database, performs a query, and then l
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/ohanovdmytro/fetch-author-cli.git
 
 # Navigate to the project directory
 cd path/to/project
